@@ -122,10 +122,15 @@ RMSE <- function(true_ratings, predicted_ratings){
 #SPLIT THE DATA. 
 #it's not allowed use validations set to train, so i'm going to split edx dataset into train and test set
 set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+
 tempSet <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
 train_set <- edx[-tempSet,]
 test_set <- edx[tempSet,]
 
+#
+test_set <- test_set %>% 
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
 
 #First Approach - just rating average
 FirstApproach_Model <- mean(train_set$rating);
@@ -140,9 +145,11 @@ rmse_results
 
 
 #Second approach - using movie effect
-movie_avgs <- train_set %>% group_by(movieId) %>% summarize(b_i = mean(rating - FirstApproach_Model))
+avgs_of_movies <- train_set %>% group_by(movieId) %>% 
+  summarize(bias_movies = mean(rating - FirstApproach_Model))
 
-SecondApproach_Model <- FirstApproach_Model + test_set %>% left_join(movie_avgs, by='movieId') %>% pull(b_i)
+SecondApproach_Model <- FirstApproach_Model + test_set %>% 
+  left_join(avgs_of_movies, by='movieId') %>% pull(bias_movies)
 
 SecondApproach_Predict<- RMSE(test_set$rating,SecondApproach_Model) 
 SecondApproach_Predict
@@ -153,10 +160,34 @@ rmse_results <- bind_rows(rmse_results, data_frame(method="Second Approach - Mov
 rmse_results
 
 
+#Third Approach - using user effect
+avgs_of_users <- train_set %>% left_join(avgs_of_movies, by='movieId') %>% 
+  group_by(userId) %>% 
+  summarize(bias_user = mean(rating - FirstApproach_Model - bias_movies))
+
+#Here Build the model
+ThirdApproach_Model <- test_set %>% left_join(avgs_of_movies, by='movieId') %>% 
+  left_join(avgs_of_users, by='userId') %>% mutate(avgSum = (FirstApproach_Model + bias_movies + bias_user)) %>% 
+  pull(avgSum)
+
+
+ThirdApproach_Predict<- RMSE(test_set$rating,ThirdApproach_Model) 
+ThirdApproach_Predict
+
+##Save in table the third approach
+rmse_results <- bind_rows(rmse_results, data_frame(method="Third Approach - Movie Effect/User Effect ",  RMSE = ThirdApproach_Predict))
+rmse_results
+
+
 ##CHECK WITH VALIDATION SET
-validation_Mean <- mean(validation$rating)
-validation_Movie_avg <- validation %>% group_by(movieId) %>% summarize(b_i = mean(rating - validation_Mean))
-validation_Model <- validation_Mean + validation %>% left_join(validation_Movie_avg, by='movieId') %>% pull(b_i)
+validation_Model <- validation %>% 
+  left_join(avgs_of_movies, by='movieId') %>% 
+  left_join(avgs_of_users, by='userId') %>% 
+  mutate(avgSum = FirstApproach_Model + bias_movies + bias_user) %>% 
+  pull(avgSum)
+
+
+#validation_Model <- validation_Mean + validation %>% left_join(validation_Movie_avg, by='movieId') %>% pull(b_i)
 validation_RMSE <- RMSE(validation$rating,validation_Model) 
 validation_RMSE
 
